@@ -1,8 +1,10 @@
 // kilocode_change - new file
 
 import { MemoryService } from "./memory-service"
-import { MemoryContext, SuggestionContext, Suggestion } from "../../types/indexing-types"
+import { PatternLearner } from "./pattern-learner"
 import { logger } from "../indexing/logging-service"
+import { MemoryContext, MemoryConfig, Suggestion, ContextAnalysis } from "../../types/memory-types"
+import { UserMemory } from "../../types/indexing-types"
 
 export interface ContextAnalysis {
 	currentContext: MemoryContext
