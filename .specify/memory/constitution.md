@@ -1,73 +1,49 @@
-# [PROJECT_NAME] Constitution
+<!--
+Sync Impact Report:
+- Version change: template → 1.0.0 (initial constitution)
+- Modified principles: All 5 principles newly defined
+- Added sections: Development Workflow, Quality Gates, Governance
+- Templates requiring updates:
+  - ✅ plan-template.md (Constitution Check section aligns with new principles)
+  - ✅ spec-template.md (User story independence aligns with Test-First principle)
+  - ✅ tasks-template.md (Incremental delivery aligns with MVP principle)
+- Follow-up TODOs: None
+-->
 
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Kilo Code Constitution
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
+### I. Test-First Development (NON-NEGOTIABLE)
 
-<!-- Example: I. Library-First -->
+TDD mandatory: Tests written → User approved → Tests fail → Then implement. Red-Green-Refactor cycle strictly enforced. All code changes must have test coverage before completion. Vitest framework with proper test organization (.spec.ts/.spec.tsx convention, CLI exception .test.ts/.test.tsx). Tests must pass before any PR submission.
 
-[PRINCIPLE_1_DESCRIPTION]
+### II. Code Quality Standards
 
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+Never disable any lint rules without explicit user approval. TypeScript strict mode required for all new code. Use Tailwind CSS classes instead of inline style objects for new markup. VSCode CSS variables must be added to webview-ui/src/index.css before using them in Tailwind classes. Proper error handling and structured logging required throughout the codebase.
 
-### [PRINCIPLE_2_NAME]
+### III. Monorepo Architecture Discipline
 
-<!-- Example: II. CLI Interface -->
+pnpm workspaces with Turbo orchestration for task management. Clear separation of concerns: src/ (core extension), webview-ui/ (React frontend), cli/ (standalone CLI), packages/ (shared), jetbrains/ (plugin). Mark Kilo Code-specific changes in shared code with kilocode_change comments to minimize merge conflicts during upstream syncs. Keep changes to core extension code minimal.
 
-[PRINCIPLE_2_DESCRIPTION]
+### IV. Open Source & Community
 
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+All PRs require changesets unless documentation-only or internal tooling. Use semantic versioning: patch for fixes, minor for features, major for breaking changes. Clear documentation and examples for all public APIs. Community-driven development with transparent release process. Maintain compatibility with upstream Roo Code fork through disciplined change management.
 
-### [PRINCIPLE_3_NAME]
+### V. Incremental Delivery & MVP Focus
 
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
+MVP-first approach with independently testable user stories. Each user story must be independently completable, testable, and deliverable. Continuous integration with git hooks (pre-commit, pre-push) for quality gates. Automated testing, linting, and type checking must pass before any merge. Focus on delivering value incrementally rather than monolithic releases.
 
-[PRINCIPLE_3_DESCRIPTION]
+## Development Workflow
 
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+Git hooks enforce quality standards through Husky. Pre-commit hook prevents direct main branch commits, runs type generation, checks staged files, and runs lint-staged. Pre-push hook prevents direct main pushes, runs type checking, and verifies changeset existence. All changes must be tested from the correct workspace directory (src/ for backend, webview-ui/ for UI). Use `pnpm test <relative-path>` with proper workspace context.
 
-### [PRINCIPLE_4_NAME]
+## Quality Gates
 
-<!-- Example: IV. Integration Testing -->
-
-[PRINCIPLE_4_DESCRIPTION]
-
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
-
-### [PRINCIPLE_5_NAME]
-
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-
-[PRINCIPLE_5_DESCRIPTION]
-
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
-
-## [SECTION_2_NAME]
-
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
-
-[SECTION_2_CONTENT]
-
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
-
-## [SECTION_3_NAME]
-
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
-
-[SECTION_3_CONTENT]
-
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+Before attempting completion, always ensure code changes have test coverage. Run `pnpm lint` for ESLint compliance and `pnpm check-types` for TypeScript validation. Tests must be run from the same directory as the package.json file that specifies vitest. Backend tests: `cd src && pnpm test tests/file.spec.ts`. UI tests: `cd webview-ui && pnpm test src/file.spec.ts`. Never run tests from project root. All quality gates must pass before any PR submission.
 
 ## Governance
 
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
+This constitution supersedes all other development practices. Amendments require documentation, approval, and migration plan. All PRs and reviews must verify compliance with constitutional principles. Complexity must be justified with clear business value. Use DEVELOPMENT.md and AGENTS.md for runtime development guidance. Version follows semantic versioning: MAJOR for backward-incompatible governance changes, MINOR for new principles or sections, PATCH for clarifications and non-semantic refinements.
 
-[GOVERNANCE_RULES]
-
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
-
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2025-01-10 | **Last Amended**: 2025-01-10
