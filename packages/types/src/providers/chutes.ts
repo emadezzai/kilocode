@@ -42,6 +42,7 @@ export type ChutesModelId =
 	| "Qwen/Qwen3-Next-80B-A3B-Instruct"
 	| "Qwen/Qwen3-Next-80B-A3B-Thinking"
 	| "Qwen/Qwen3-VL-235B-A22B-Thinking"
+	| "XiaomiMiMo/MiMo-V2-Flash"
 
 export const chutesDefaultModelId: ChutesModelId = "deepseek-ai/DeepSeek-R1-0528"
 
@@ -495,6 +496,18 @@ export const chutesModels = {
 		outputPrice: 0.65,
 		description:
 			"Qwen3‑VL‑235B‑A22B‑Thinking is an open‑weight MoE vision‑language model (235B total, ~22B activated) optimized for deliberate multi‑step reasoning with strong text‑image‑video understanding and long‑context capabilities.",
+	},
+	"XiaomiMiMo/MiMo-V2-Flash": {
+		maxTokens: 1024,
+		contextWindow: 262144,
+		supportsImages: false,
+		supportsPromptCache: false,
+		supportsNativeTools: true,
+		defaultToolProtocol: "native",
+		inputPrice: 0,
+		outputPrice: 0,
+		description: "Xiaomi MiMo V2 Flash model with 256k context window.",
+		preferredIndex: 100,
 	},
 } as const satisfies Record<string, ModelInfo>
 
