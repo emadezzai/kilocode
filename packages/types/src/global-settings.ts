@@ -14,7 +14,11 @@ import { telemetrySettingsSchema } from "./telemetry.js"
 import { modeConfigSchema } from "./mode.js"
 import { customModePromptsSchema, customSupportPromptsSchema } from "./mode.js"
 import { languagesSchema } from "./vscode.js"
-import { fastApplyModelSchema, autocompleteServiceSettingsSchema, fastApplyApiProviderSchema } from "./kilocode/kilocode.js"
+import {
+	fastApplyModelSchema,
+	autocompleteServiceSettingsSchema,
+	fastApplyApiProviderSchema,
+} from "./kilocode/kilocode.js"
 
 /**
  * Default delay in milliseconds after writes to allow diagnostics to detect potential problems.
@@ -245,6 +249,7 @@ export const globalSettingsSchema = z.object({
 	lastModeExportPath: z.string().optional(),
 	lastModeImportPath: z.string().optional(),
 	appendSystemPrompt: z.string().optional(), // kilocode_change: Custom text to append to system prompt (CLI only)
+	browserDefaultUrl: z.string().optional(), // kilocode_change: Project-specific browser default URL
 })
 
 export type GlobalSettings = z.infer<typeof globalSettingsSchema>

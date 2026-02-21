@@ -27,12 +27,14 @@ type BrowserSettingsProps = HTMLAttributes<HTMLDivElement> & {
 	screenshotQuality?: number
 	remoteBrowserHost?: string
 	remoteBrowserEnabled?: boolean
+	browserDefaultUrl?: string
 	setCachedStateField: SetCachedStateField<
 		| "browserToolEnabled"
 		| "browserViewportSize"
 		| "screenshotQuality"
 		| "remoteBrowserHost"
 		| "remoteBrowserEnabled"
+		| "browserDefaultUrl"
 	>
 }
 
@@ -42,6 +44,7 @@ export const BrowserSettings = ({
 	screenshotQuality,
 	remoteBrowserHost,
 	remoteBrowserEnabled,
+	browserDefaultUrl,
 	setCachedStateField,
 	...props
 }: BrowserSettingsProps) => {
@@ -179,6 +182,20 @@ export const BrowserSettings = ({
 							<div className="text-vscode-descriptionForeground text-sm mt-1">
 								{t("settings:browser.screenshotQuality.description")}
 							</div>
+						</SearchableSetting>
+
+						<SearchableSetting
+							settingId="browser-default-url"
+							section="browser"
+							label={t("settings:browser.defaultUrl.label")}>
+							<label className="block font-medium mb-1">{t("settings:browser.defaultUrl.label")}</label>
+							<VSCodeTextField
+								value={browserDefaultUrl ?? ""}
+								onInput={(e: any) => setCachedStateField("browserDefaultUrl", e.target.value)}
+								placeholder="https://google.com"
+								className="w-full">
+								<span slot="description">{t("settings:browser.defaultUrl.description")}</span>
+							</VSCodeTextField>
 						</SearchableSetting>
 
 						<SearchableSetting

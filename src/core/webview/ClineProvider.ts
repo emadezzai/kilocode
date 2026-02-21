@@ -2311,6 +2311,7 @@ export class ClineProvider
 			yoloGatekeeperApiConfigId, // kilocode_change: AI gatekeeper for YOLO mode
 			selectedMicrophoneDevice, // kilocode_change: Selected microphone device for STT
 			isBrowserSessionActive,
+			browserDefaultUrl, // kilocode_change: Project-specific browser default URL
 		} = await this.getState()
 
 		// kilocode_change start: Get active model for virtual quota fallback UI display
@@ -2566,6 +2567,7 @@ export class ClineProvider
 					return false
 				}
 			})(),
+			browserDefaultUrl, // kilocode_change: Project-specific browser default URL
 			debug: vscode.workspace.getConfiguration(Package.name).get<boolean>("debug", false),
 		}
 	}
@@ -2682,9 +2684,14 @@ export class ClineProvider
 		// Get actual browser session state
 		const isBrowserSessionActive = this.getCurrentTask()?.browserSession?.isSessionActive() ?? false
 
+		// kilocode_change start: Get project-specific browser default URL
+		const browserDefaultUrl = this.context.workspaceState.get<string>("browserDefaultUrl")
+		// kilocode_change end
+
 		// Return the same structure as before.
 		return {
 			apiConfiguration: providerSettings,
+			browserDefaultUrl, // kilocode_change: Project-specific browser default URL
 			kilocodeDefaultModel: (
 				await getKilocodeDefaultModel(providerSettings.kilocodeToken, providerSettings.kilocodeOrganizationId)
 			).defaultModel, // kilocode_change
@@ -2909,6 +2916,12 @@ export class ClineProvider
 	}
 
 	public async setValue<K extends keyof RooCodeSettings>(key: K, value: RooCodeSettings[K]) {
+		// kilocode_change start: Handle project-specific browser default URL
+		if (key === "browserDefaultUrl") {
+			await this.context.workspaceState.update(key, value)
+			return
+		}
+		// kilocode_change end
 		await this.contextProxy.setValue(key, value)
 	}
 

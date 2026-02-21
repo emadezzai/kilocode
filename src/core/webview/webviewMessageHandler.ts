@@ -724,7 +724,7 @@ export const webviewMessageHandler = async (
 						}
 					}
 
-					await provider.contextProxy.setValue(key as keyof RooCodeSettings, newValue)
+					await provider.setValue(key as keyof RooCodeSettings, newValue)
 				}
 
 				await provider.postStateToWebview()

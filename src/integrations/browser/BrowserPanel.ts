@@ -87,8 +87,12 @@ export class ElementPickerBrowser {
 		// Setup element picker on this page
 		await this.setupPage(this.page)
 
-		// Navigate to Google
-		await this.page.goto("https://www.google.com", { waitUntil: "domcontentloaded" })
+		// Navigate to browser default URL or fallback to Google
+		const provider = await ClineProvider.getInstance()
+		const { browserDefaultUrl } = provider ? await provider.getState() : { browserDefaultUrl: undefined }
+		const startUrl = browserDefaultUrl || "https://www.google.com"
+
+		await this.page.goto(startUrl, { waitUntil: "domcontentloaded" })
 
 		// Setup new tabs automatically
 		this.browser.on("targetcreated", async (target) => {

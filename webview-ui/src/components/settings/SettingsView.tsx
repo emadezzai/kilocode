@@ -189,6 +189,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>((props, ref)
 		autoCondenseContextPercent,
 		browserToolEnabled,
 		browserViewportSize,
+		browserDefaultUrl, // kilocode_change: Project-specific browser default URL
 		enableCheckpoints,
 		checkpointTimeout,
 		diffEnabled,
@@ -564,6 +565,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>((props, ref)
 					browserViewportSize: browserViewportSize ?? "900x600",
 					remoteBrowserHost: remoteBrowserEnabled ? remoteBrowserHost : undefined,
 					remoteBrowserEnabled: remoteBrowserEnabled ?? false,
+					browserDefaultUrl: browserDefaultUrl, // kilocode_change: Project-specific browser default URL
 					fuzzyMatchThreshold: fuzzyMatchThreshold ?? 1.0,
 					writeDelayMs,
 					screenshotQuality: screenshotQuality ?? 75,
@@ -1147,6 +1149,7 @@ const SettingsView = forwardRef<SettingsViewRef, SettingsViewProps>((props, ref)
 								screenshotQuality={screenshotQuality}
 								remoteBrowserHost={remoteBrowserHost}
 								remoteBrowserEnabled={remoteBrowserEnabled}
+								browserDefaultUrl={browserDefaultUrl}
 								setCachedStateField={setCachedStateField}
 							/>
 						)}
