@@ -286,19 +286,22 @@ export const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 				} else if (message.type === "insertTextToChatArea") {
 					// kilocode_change
 					if (message.text) {
-						setInputValue(message.text)
-						setTimeout(() => {
-							if (textAreaRef.current) {
-								textAreaRef.current.focus()
-							}
-						}, 0)
+						setInputValue(inputValue ? inputValue + "\n" + message.text : (message.text as string))
 					}
+					if (message.images && message.images.length > 0) {
+						setSelectedImages((prev: string[]) => [...prev, ...message.images])
+					}
+					setTimeout(() => {
+						if (textAreaRef.current) {
+							textAreaRef.current.focus()
+						}
+					}, 0)
 				}
 			}
 
 			window.addEventListener("message", messageHandler)
 			return () => window.removeEventListener("message", messageHandler)
-		}, [setInputValue, searchRequestId, inputValue, onSend])
+		}, [setInputValue, setSelectedImages, searchRequestId, inputValue, onSend])
 		const [isDraggingOver, setIsDraggingOver] = useState(false)
 		// kilocode_change start: Slash commands state
 		const [showSlashCommandsMenu, setShowSlashCommandsMenu] = useState(false)

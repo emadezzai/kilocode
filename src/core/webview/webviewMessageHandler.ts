@@ -4166,11 +4166,12 @@ export const webviewMessageHandler = async (
 
 		case "insertTextIntoTextarea": {
 			const text = message.text
-			if (text) {
+			if (text || (message.images && message.images.length > 0)) {
 				// Send message to insert text into the chat textarea
 				await provider.postMessageToWebview({
-					type: "insertTextIntoTextarea",
+					type: "insertTextToChatArea",
 					text: text,
+					images: message.images,
 				})
 			}
 			break

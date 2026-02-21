@@ -111,6 +111,7 @@ export class ElementPickerBrowser {
 				try {
 					const elements = JSON.parse(json) as Array<{
 						selector: string
+						xpath: string
 						html: string
 						tagName: string
 					}>
@@ -246,7 +247,7 @@ export class ElementPickerBrowser {
 			const minBtn = shadow.getElementById("minBtn")!
 
 			let pickerOn = false
-			let selected: Array<{ selector: string; html: string; tagName: string }> = []
+			let selected: Array<{ selector: string; xpath: string; html: string; tagName: string }> = []
 			let hovered: HTMLElement | null = null
 			let isMin = false
 
@@ -326,6 +327,7 @@ export class ElementPickerBrowser {
 				t.classList.remove("cline-hover")
 
 				const sel = cssPath(t)
+				const xp = getXPath(t)
 				const tag = t.tagName.toLowerCase()
 				let html = t.outerHTML
 				if (html.length > 5000) html = html.substring(0, 5000) + "\n<!-- truncated -->"
@@ -335,10 +337,37 @@ export class ElementPickerBrowser {
 					selected.splice(idx, 1)
 					t.classList.remove("cline-selected")
 				} else {
-					selected.push({ selector: sel, html, tagName: tag })
+					selected.push({ selector: sel, xpath: xp, html, tagName: tag })
 					t.classList.add("cline-selected")
 				}
 				refreshUI()
+			}
+
+			function getXPath(el: Element): string {
+				if (el.id !== "") return `//*[@id="${el.id}"]`
+				if (el === document.body) return el.tagName.toLowerCase()
+
+				let ix = 0
+				const siblings = el.parentNode?.children
+				if (siblings) {
+					for (let i = 0; i < siblings.length; i++) {
+						const sibling = siblings[i]
+						if (sibling === el) {
+							return (
+								getXPath(el.parentNode as Element) +
+								"/" +
+								el.tagName.toLowerCase() +
+								"[" +
+								(ix + 1) +
+								"]"
+							)
+						}
+						if (sibling.nodeType === 1 && sibling.tagName === el.tagName) {
+							ix++
+						}
+					}
+				}
+				return ""
 			}
 
 			function cssPath(el: Element): string {
@@ -411,20 +440,40 @@ export class ElementPickerBrowser {
 	 * Send selected elements to the Kilo Code chat
 	 */
 	private async sendElementsToChat(
-		elements: Array<{ selector: string; html: string; tagName: string }>,
+		elements: Array<{ selector: string; xpath: string; html: string; tagName: string }>,
 	): Promise<void> {
 		if (elements.length === 0) return
 
 		const parts = elements.map((el, i) => {
-			return `### Element ${i + 1}: \`<${el.tagName}>\` — \`${el.selector}\`\n\`\`\`html\n${el.html}\n\`\`\``
+			return `### Element ${i + 1}: \`<${el.tagName}>\`\n**CSS**: \`${el.selector}\`\n**XPath**: \`${el.xpath}\`\n\n\`\`\`html\n${el.html}\n\`\`\``
 		})
 
 		const message = `Browser Elements Selected:\n\n${parts.join("\n\n")}`
+		const images: string[] = []
+
+		if (this.page) {
+			for (const el of elements) {
+				try {
+					const handle = await this.page.$(el.selector)
+					if (handle) {
+						// Scroll element into view for screenshot if needed
+						await handle.evaluate((node) => node.scrollIntoView({ behavior: "instant", block: "center" }))
+						// Add a slight delay for scrolling / animation to settle
+						await new Promise((resolve) => setTimeout(resolve, 100))
+
+						const screenshot = await handle.screenshot({ encoding: "base64" })
+						images.push(`data:image/png;base64,${screenshot}`)
+					}
+				} catch (e) {
+					console.error("Failed to take screenshot for element:", el.selector, e)
+				}
+			}
+		}
 
 		try {
 			const provider = ClineProvider.getVisibleInstance()
 			if (provider) {
-				await provider.postMessageToWebview({ type: "insertTextIntoTextarea", text: message })
+				await provider.postMessageToWebview({ type: "insertTextToChatArea", text: message, images })
 			}
 			vscode.window.showInformationMessage(`${elements.length} element(s) sent to Kilo Code chat!`)
 		} catch (error) {
