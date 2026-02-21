@@ -1737,7 +1737,7 @@ export const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								vscode.postMessage({ type: "openBrowserPanel" })
 							}}
 							className={cn(
-								"relative inline-flex items-center justify-center",
+								"relative inline-flex items-center justify-center gap-1.5",
 								"bg-transparent border-none p-1.5",
 								"rounded-md min-w-[28px] min-h-[28px]",
 								"opacity-60 hover:opacity-100 text-vscode-descriptionForeground hover:text-vscode-foreground",
@@ -1748,6 +1748,7 @@ export const ChatTextArea = forwardRef<HTMLTextAreaElement, ChatTextAreaProps>(
 								"cursor-pointer",
 							)}>
 							<Globe className={cn("w-4 h-4", { hidden: containerWidth < 235 })} />
+							<span className={cn("text-xs", { hidden: containerWidth < 235 })}>Pick Element</span>
 						</button>
 					</StandardTooltip>
 

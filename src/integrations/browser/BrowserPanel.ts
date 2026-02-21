@@ -7,6 +7,18 @@ import { ClineProvider } from "../../core/webview/ClineProvider"
  * ElementPickerBrowser opens a real Chrome browser window with an injected
  * element picker overlay. Users browse normally, pick elements, and send
  * them to the Kilo Code chat.
+ *
+ * Features:
+ * - Element picking with CSS/XPath selectors
+ * - Action recording (clicks, form changes)
+ * - Design mode (contentEditable)
+ * - Style editor with CSS property editing
+ * - NEW: Add new CSS rules (not just modify existing)
+ * - NEW: Apply changes to code via AI agent
+ * - NEW: Theme testing (light/dark mode)
+ * - NEW: Full page screenshots
+ * - NEW: Console output viewer
+ * - NEW: Network traffic viewer
  */
 export class ElementPickerBrowser {
 	public static instance: ElementPickerBrowser | undefined
@@ -16,6 +28,8 @@ export class ElementPickerBrowser {
 	private statusBarItem: vscode.StatusBarItem | undefined
 	private capturedErrors: string[] = []
 	private failedNetworkRequests: string[] = []
+	private consoleLogs: string[] = []
+	private networkRequests: string[] = []
 
 	public static async launch() {
 		// If already running, focus it
@@ -123,6 +137,10 @@ export class ElementPickerBrowser {
 						actions: string[]
 						designEdits?: Array<{ selector: string; text: string; html: string }>
 						styleEdits?: Array<{ selector: string; css: string }>
+						addedCssRules?: string[]
+						applyToCode?: boolean
+						consoleLogs?: string[]
+						networkRequests?: string[]
 					}
 					// Support for backward compatibility if old payload was cached
 					if (Array.isArray(payload)) {
@@ -133,6 +151,10 @@ export class ElementPickerBrowser {
 							payload.actions || [],
 							payload.designEdits || [],
 							payload.styleEdits || [],
+							payload.addedCssRules || [],
+							payload.applyToCode || false,
+							payload.consoleLogs || [],
+							payload.networkRequests || [],
 						)
 					}
 				} catch (err) {
@@ -143,29 +165,128 @@ export class ElementPickerBrowser {
 			// Already exposed
 		}
 
-		// Attach listeners for Console Errors
+		// Expose function for requesting screenshot
+		try {
+			await page.exposeFunction("__clineRequestScreenshot", async () => {
+				try {
+					if (this.page) {
+						const screenshot = await this.page.screenshot({ encoding: "base64", fullPage: true })
+						const message = `### 📷 Full Page Screenshot\nA full page screenshot has been captured.`
+						const images = [`data:image/png;base64,${screenshot}`]
+						const provider = ClineProvider.getVisibleInstance()
+						if (provider) {
+							await provider.postMessageToWebview({ type: "insertTextToChatArea", text: message, images })
+						}
+					}
+				} catch (err) {
+					console.error("Failed to take screenshot:", err)
+				}
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Expose function for getting console logs without sending
+		try {
+			await page.exposeFunction("__clineGetConsoleLogs", async () => {
+				return this.consoleLogs
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Expose function for getting network requests without sending
+		try {
+			await page.exposeFunction("__clineGetNetworkRequests", async () => {
+				return this.networkRequests
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Expose function for sending console logs
+		try {
+			await page.exposeFunction("__clineSendConsoleLogs", async (logs: string[]) => {
+				await this.sendElementsToChat([], [], [], [], [], false, logs, [])
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Expose function for sending network requests
+		try {
+			await page.exposeFunction("__clineSendNetworkRequests", async (requests: string[]) => {
+				await this.sendElementsToChat([], [], [], [], [], false, [], requests)
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Expose function for clearing console logs
+		try {
+			await page.exposeFunction("__clineClearConsoleLogs", async () => {
+				this.consoleLogs = []
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Expose function for clearing network requests
+		try {
+			await page.exposeFunction("__clineClearNetworkRequests", async () => {
+				this.networkRequests = []
+			})
+		} catch {
+			// Already exposed
+		}
+
+		// Attach listeners for Console (all types, not just errors)
 		page.on("console", (msg) => {
-			if (msg.type() === "error") {
-				this.capturedErrors.push(`[Console Error] ${msg.text()}`)
+			const type = msg.type()
+			const text = msg.text()
+			const timestamp = new Date().toISOString().substr(11, 12)
+			this.consoleLogs.push(`[${timestamp}] [${type.toUpperCase()}] ${text}`)
+			if (this.consoleLogs.length > 200) this.consoleLogs.shift()
+
+			if (type === "error") {
+				this.capturedErrors.push(`[Console Error] ${text}`)
 				if (this.capturedErrors.length > 50) this.capturedErrors.shift()
 			}
 		})
 		page.on("pageerror", (error) => {
+			const timestamp = new Date().toISOString().substr(11, 12)
+			this.consoleLogs.push(`[${timestamp}] [PAGE ERROR] ${error.message}`)
+			if (this.consoleLogs.length > 200) this.consoleLogs.shift()
+
 			this.capturedErrors.push(`[Page Error] ${error.message}`)
 			if (this.capturedErrors.length > 50) this.capturedErrors.shift()
 		})
 
-		// Attach listeners for Failed Network Requests
+		// Attach listeners for Network Requests (all requests, not just failed)
+		page.on("request", (request) => {
+			const timestamp = new Date().toISOString().substr(11, 12)
+			this.networkRequests.push(`[${timestamp}] → ${request.method()} ${request.url()}`)
+			if (this.networkRequests.length > 200) this.networkRequests.shift()
+		})
 		page.on("requestfailed", (request) => {
-			this.failedNetworkRequests.push(
-				`[Request Failed] ${request.method()} ${request.url()} - ${request.failure()?.errorText || "Unknown error"}`,
-			)
+			const timestamp = new Date().toISOString().substr(11, 12)
+			const failureText = request.failure()?.errorText || "Unknown error"
+			this.networkRequests.push(`[${timestamp}] ✗ FAILED ${request.method()} ${request.url()} - ${failureText}`)
+			if (this.networkRequests.length > 200) this.networkRequests.shift()
+
+			this.failedNetworkRequests.push(`[Request Failed] ${request.method()} ${request.url()} - ${failureText}`)
 			if (this.failedNetworkRequests.length > 50) this.failedNetworkRequests.shift()
 		})
 		page.on("response", (response) => {
+			const timestamp = new Date().toISOString().substr(11, 12)
+			const status = response.status()
+			const statusText = response.ok() ? "✓" : `✗ ${status}`
+			this.networkRequests.push(`[${timestamp}] ← ${statusText} ${response.request().method()} ${response.url()}`)
+			if (this.networkRequests.length > 200) this.networkRequests.shift()
+
 			if (!response.ok()) {
 				this.failedNetworkRequests.push(
-					`[Response Error] ${response.request().method()} ${response.url()} - Status: ${response.status()}`,
+					`[Response Error] ${response.request().method()} ${response.url()} - Status: ${status}`,
 				)
 				if (this.failedNetworkRequests.length > 50) this.failedNetworkRequests.shift()
 			}
@@ -359,17 +480,109 @@ export class ElementPickerBrowser {
 					}
 					.cline-btn-inspector-send:hover { background: linear-gradient(135deg, #FFB74D, #FF9800); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(255,152,0,0.4); }
 					.cline-btn-inspector-send:active { transform: translateY(1px); box-shadow: 0 2px 8px rgba(255,152,0,0.3); }
+					
+					/* New buttons */
+					.cline-btn-theme { background: #607D8B; color: #fff; }
+					.cline-btn-theme:hover { background: #78909C; }
+					.cline-btn-theme.active { background: #263238; }
+					.cline-btn-screenshot { background: #00BCD4; color: #fff; }
+					.cline-btn-screenshot:hover { background: #26C6DA; }
+					.cline-btn-console { background: #795548; color: #fff; }
+					.cline-btn-console:hover { background: #8D6E63; }
+					.cline-btn-console.active { background: #d00000; }
+					.cline-btn-network { background: #009688; color: #fff; }
+					.cline-btn-network:hover { background: #26A69A; }
+					.cline-btn-network.active { background: #d00000; }
+					
+					/* Console and Network Panels */
+					.cline-panel {
+						display: none; position: fixed; left: 20px; bottom: 60px; width: 500px; max-height: 400px;
+						background: #1e1e2e; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+						box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,152,0,0.2); 
+						z-index: 2147483648; color: #e0e0e0; font-family: ui-monospace, monospace; font-size: 11px;
+						flex-direction: column;
+						animation: slideUp 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+					}
+					@keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+					.cline-panel.active { display: flex; }
+					.cline-panel-header {
+						padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,0.08);
+						font-weight: 700; font-size: 12px; display: flex; justify-content: space-between; align-items: center;
+						background: rgba(0,0,0,0.2); border-radius: 12px 12px 0 0; color: #fff;
+					}
+					.cline-panel-header .close-btn { cursor: pointer; color: #888; font-size: 16px; }
+					.cline-panel-header .close-btn:hover { color: #f44336; }
+					.cline-panel-body { 
+						padding: 8px; overflow-y: auto; overflow-x: hidden; max-height: 340px;
+					}
+					.cline-panel-body::-webkit-scrollbar { width: 6px; }
+					.cline-panel-body::-webkit-scrollbar-track { background: transparent; }
+					.cline-panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+					.cline-log-entry {
+						padding: 4px 8px; border-bottom: 1px solid rgba(255,255,255,0.05);
+						white-space: pre-wrap; word-break: break-all; line-height: 1.4;
+					}
+					.cline-log-entry:last-child { border-bottom: none; }
+					.cline-log-entry.error { color: #f44336; background: rgba(244,67,54,0.1); }
+					.cline-log-entry.warn { color: #FF9800; background: rgba(255,152,0,0.1); }
+					.cline-log-entry.info { color: #2196F3; background: rgba(33,150,243,0.1); }
+					.cline-log-entry .timestamp { color: #666; margin-right: 8px; }
+					.cline-panel-footer {
+						padding: 8px 12px; border-top: 1px solid rgba(255,255,255,0.08);
+						display: flex; gap: 8px; justify-content: flex-end;
+					}
+					.cline-panel-btn {
+						padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;
+						font-size: 11px; font-weight: 600; background: rgba(255,255,255,0.1); color: #fff;
+						transition: all 0.15s;
+					}
+					.cline-panel-btn:hover { background: rgba(255,255,255,0.2); }
+					.cline-panel-btn.primary { background: #FF9800; }
+					.cline-panel-btn.primary:hover { background: #FFB74D; }
+					
+					/* Add CSS Rule Section */
+					.cline-add-rule {
+						padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px; margin-top: 12px;
+					}
+					.cline-add-rule-header {
+						font-size: 11px; color: #888; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;
+					}
+					.cline-add-rule textarea {
+						width: 100%; height: 80px; background: #11111a; border: 1px solid rgba(255,255,255,0.1);
+						color: #fff; padding: 8px; border-radius: 6px; font-family: ui-monospace, monospace;
+						font-size: 11px; resize: vertical;
+					}
+					.cline-add-rule textarea:focus { outline: none; border-color: #FF9800; }
+					.cline-add-rule textarea::placeholder { color: #555; }
+					.cline-btn-add-rule {
+						margin-top: 8px; padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer;
+						font-size: 11px; font-weight: 600; background: #4CAF50; color: #fff;
+					}
+					.cline-btn-add-rule:hover { background: #66BB6A; }
+					
+					/* Apply to Code Button */
+					.cline-btn-apply {
+						width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer;
+						font-size: 13px; font-weight: 600; background: linear-gradient(135deg, #4CAF50, #388E3C);
+						color: #fff; transition: all 0.2s; box-shadow: 0 4px 12px rgba(76,175,80,0.3);
+						margin-top: 8px; display: flex; justify-content: center; align-items: center; gap: 6px;
+					}
+					.cline-btn-apply:hover { background: linear-gradient(135deg, #66BB6A, #4CAF50); transform: translateY(-1px); }
 				</style>
 				<div class="cline-bar" id="bar">
 					<div class="cline-left">
 						<span class="cline-brand">🎯 Kilo Code</span>
-						<button class="cline-btn cline-btn-pick" id="pickBtn">Pick Element</button>
-						<button class="cline-btn cline-btn-record" id="recordBtn">⏺ Record Actions</button>
-						<button class="cline-btn cline-btn-design" id="designBtn">🎨 Design Mode</button>
-						<button class="cline-btn cline-btn-style" id="styleBtn">💅 Style Editor</button>
+						<button class="cline-btn cline-btn-pick" id="pickBtn">Pick</button>
+						<button class="cline-btn cline-btn-record" id="recordBtn">⏺ Record</button>
+						<button class="cline-btn cline-btn-design" id="designBtn">🎨 Design</button>
+						<button class="cline-btn cline-btn-style" id="styleBtn">💅 Style</button>
+						<button class="cline-btn cline-btn-theme" id="themeBtn" title="Toggle Dark/Light Mode">🌓 Theme</button>
+						<button class="cline-btn cline-btn-screenshot" id="screenshotBtn" title="Full Page Screenshot">📷 Shot</button>
+						<button class="cline-btn cline-btn-console" id="consoleBtn" title="View Console Logs">📋 Logs</button>
+						<button class="cline-btn cline-btn-network" id="networkBtn" title="View Network Traffic">🌐 Net</button>
 					</div>
 					<div class="cline-center" id="tags">
-						<span class="cline-count">Click "Pick Element", "Record Actions", "Design Mode", or "Style Editor"</span>
+						<span class="cline-count">Click a button to start</span>
 					</div>
 					<div class="cline-right">
 						<button class="cline-btn cline-btn-clear" id="clearBtn" style="display:none">Clear</button>
@@ -602,12 +815,52 @@ export class ElementPickerBrowser {
 								<input type="text" id="prop-transform" placeholder="Transform" title="Transform" />
 							</div>
 						</div>
+						<!-- Add New CSS Rule Section -->
+						<div class="cline-add-rule">
+							<div class="cline-add-rule-header">Add New CSS Rule</div>
+							<textarea id="newCssRule" placeholder="Enter CSS rule, e.g.:&#10;.my-class {&#10;  color: red;&#10;  padding: 10px;&#10;}"></textarea>
+							<button class="cline-btn-add-rule" id="addRuleBtn">Add CSS Rule</button>
+						</div>
 					</div>
 					<div class="cline-inspector-footer">
 						<button class="cline-btn-inspector-send" id="inspectorSendBtn">
 							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
 							Send Styles to Chat
 						</button>
+						<button class="cline-btn-apply" id="applyToCodeBtn">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+							Apply to Code
+						</button>
+					</div>
+				</div>
+				
+				<!-- Console Panel -->
+				<div class="cline-panel" id="consolePanel">
+					<div class="cline-panel-header">
+						<span>📋 Console Output</span>
+						<span class="close-btn" id="consoleClose">✕</span>
+					</div>
+					<div class="cline-panel-body" id="consoleBody">
+						<div class="cline-log-entry">No console logs captured yet...</div>
+					</div>
+					<div class="cline-panel-footer">
+						<button class="cline-panel-btn" id="consoleClearBtn">Clear</button>
+						<button class="cline-panel-btn primary" id="consoleSendBtn">Send to Chat</button>
+					</div>
+				</div>
+				
+				<!-- Network Panel -->
+				<div class="cline-panel" id="networkPanel">
+					<div class="cline-panel-header">
+						<span>🌐 Network Traffic</span>
+						<span class="close-btn" id="networkClose">✕</span>
+					</div>
+					<div class="cline-panel-body" id="networkBody">
+						<div class="cline-log-entry">No network requests captured yet...</div>
+					</div>
+					<div class="cline-panel-footer">
+						<button class="cline-panel-btn" id="networkClearBtn">Clear</button>
+						<button class="cline-panel-btn primary" id="networkSendBtn">Send to Chat</button>
 					</div>
 				</div>
 			`
@@ -619,6 +872,10 @@ export class ElementPickerBrowser {
 			const recordBtn = shadow.getElementById("recordBtn")!
 			const designBtn = shadow.getElementById("designBtn")!
 			const styleBtn = shadow.getElementById("styleBtn")!
+			const themeBtn = shadow.getElementById("themeBtn")!
+			const screenshotBtn = shadow.getElementById("screenshotBtn")!
+			const consoleBtn = shadow.getElementById("consoleBtn")!
+			const networkBtn = shadow.getElementById("networkBtn")!
 			const sendBtn = shadow.getElementById("sendBtn")! as HTMLButtonElement
 			const clearBtn = shadow.getElementById("clearBtn")! as HTMLElement
 			const tags = shadow.getElementById("tags")!
@@ -630,12 +887,31 @@ export class ElementPickerBrowser {
 			const inspectorClose = shadow.getElementById("inspectorClose")!
 			const inspectorTarget = shadow.getElementById("inspectorTarget")!
 			const inspectorSendBtn = shadow.getElementById("inspectorSendBtn")!
+			const addRuleBtn = shadow.getElementById("addRuleBtn")!
+			const newCssRule = shadow.getElementById("newCssRule")! as HTMLTextAreaElement
+			const applyToCodeBtn = shadow.getElementById("applyToCodeBtn")!
+
+			// Console Panel Elements
+			const consolePanel = shadow.getElementById("consolePanel")!
+			const consoleClose = shadow.getElementById("consoleClose")!
+			const consoleBody = shadow.getElementById("consoleBody")!
+			const consoleClearBtn = shadow.getElementById("consoleClearBtn")!
+			const consoleSendBtn = shadow.getElementById("consoleSendBtn")!
+
+			// Network Panel Elements
+			const networkPanel = shadow.getElementById("networkPanel")!
+			const networkClose = shadow.getElementById("networkClose")!
+			const networkBody = shadow.getElementById("networkBody")!
+			const networkClearBtn = shadow.getElementById("networkClearBtn")!
+			const networkSendBtn = shadow.getElementById("networkSendBtn")!
 
 			let pickerOn = false
 			let recordingOn = false
 			let designOn = false
 			let stylingOn = false
+			let isDarkMode = false
 			let currentStylingElement: HTMLElement | null = null
+			let addedCssRules: string[] = []
 
 			let selected: Array<{
 				selector: string
@@ -859,6 +1135,147 @@ export class ElementPickerBrowser {
 				sendBtn.click() // Triggers the unified send function
 			})
 
+			// Theme Toggle - Toggle dark/light mode
+			themeBtn.addEventListener("click", () => {
+				isDarkMode = !isDarkMode
+				themeBtn.textContent = isDarkMode ? "☀️" : "🌓"
+				if (isDarkMode) {
+					document.documentElement.style.filter = "invert(1) hue-rotate(180deg)"
+					// Exclude images and videos from inversion
+					const style = document.createElement("style")
+					style.id = "cline-dark-mode-fix"
+					style.textContent = `
+						img, video, svg, canvas, [style*="background-image"] {
+							filter: invert(1) hue-rotate(180deg) !important;
+						}
+					`
+					document.head.appendChild(style)
+				} else {
+					document.documentElement.style.filter = ""
+					const fix = document.getElementById("cline-dark-mode-fix")
+					if (fix) fix.remove()
+				}
+			})
+
+			// Screenshot - Take full page screenshot and send to chat
+			screenshotBtn.addEventListener("click", async () => {
+				try {
+					// Use the exposed function to request screenshot from extension
+					;(window as any).__clineRequestScreenshot()
+				} catch (e) {
+					console.error("Screenshot failed:", e)
+				}
+			})
+
+			// Console Panel Toggle
+			consoleBtn.addEventListener("click", () => {
+				consolePanel.classList.toggle("active")
+				networkPanel.classList.remove("active")
+				updateConsolePanel()
+			})
+			consoleClose.addEventListener("click", () => {
+				consolePanel.classList.remove("active")
+			})
+			consoleClearBtn.addEventListener("click", () => {
+				;(window as any).__clineClearConsoleLogs?.()
+				updateConsolePanel()
+			})
+			consoleSendBtn.addEventListener("click", async () => {
+				const logs = await (window as any).__clineGetConsoleLogs?.()
+				if (logs) {
+					await (window as any).__clineSendConsoleLogs?.(logs)
+				}
+				consolePanel.classList.remove("active")
+			})
+
+			// Network Panel Toggle
+			networkBtn.addEventListener("click", () => {
+				networkPanel.classList.toggle("active")
+				consolePanel.classList.remove("active")
+				updateNetworkPanel()
+			})
+			networkClose.addEventListener("click", () => {
+				networkPanel.classList.remove("active")
+			})
+			networkClearBtn.addEventListener("click", () => {
+				;(window as any).__clineClearNetworkRequests?.()
+				updateNetworkPanel()
+			})
+			networkSendBtn.addEventListener("click", async () => {
+				const requests = await (window as any).__clineGetNetworkRequests?.()
+				if (requests) {
+					await (window as any).__clineSendNetworkRequests?.(requests)
+				}
+				networkPanel.classList.remove("active")
+			})
+
+			// Add CSS Rule
+			addRuleBtn.addEventListener("click", () => {
+				const css = newCssRule.value.trim()
+				if (!css) return
+				try {
+					const style = document.createElement("style")
+					style.id = "cline-added-rule-" + Date.now()
+					style.textContent = css
+					document.head.appendChild(style)
+					addedCssRules.push(css)
+					newCssRule.value = ""
+					refreshUI()
+				} catch (e) {
+					console.error("Failed to add CSS rule:", e)
+				}
+			})
+
+			// Apply to Code - Send all changes to AI agent for source file updates
+			applyToCodeBtn.addEventListener("click", () => {
+				if (styleEdits.length === 0 && addedCssRules.length === 0) {
+					return
+				}
+				;(window as any).__clineSendElements(
+					JSON.stringify({
+						elements: [],
+						actions: [],
+						designEdits: [],
+						styleEdits: styleEdits.map((s: any) => ({ selector: s.selector, css: s.css })),
+						addedCssRules: addedCssRules,
+						applyToCode: true,
+					}),
+				)
+				// Clear after sending
+				styleEdits = []
+				addedCssRules = []
+				refreshUI()
+			})
+
+			// Console/Network panel update functions
+			async function updateConsolePanel() {
+				const logs = await (window as any).__clineGetConsoleLogs()
+				if (!logs || logs.length === 0) {
+					consoleBody.innerHTML = '<div class="cline-log-entry">No console logs captured yet...</div>'
+				} else {
+					consoleBody.innerHTML = logs
+						.map(
+							(log: string) =>
+								`<div class="cline-log-entry">${log.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`,
+						)
+						.join("")
+				}
+			}
+
+			async function updateNetworkPanel() {
+				const requests = await (window as any).__clineGetNetworkRequests()
+				if (!requests || requests.length === 0) {
+					networkBody.innerHTML = '<div class="cline-log-entry">No network requests captured yet...</div>'
+				} else {
+					networkBody.innerHTML = requests
+						.map(
+							(req: string) =>
+								`<div class="cline-log-entry">${req.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</div>`,
+						)
+						.join("")
+				}
+			}
+
 			// Utility: keyboard increment/decrement for numeric inputs
 			function handleNumericKeyboard(e: KeyboardEvent, input: HTMLInputElement, prop: string) {
 				if (e.key === "ArrowUp" || e.key === "ArrowDown") {
@@ -960,9 +1377,7 @@ export class ElementPickerBrowser {
 			})
 
 			function applyStyleToCurrent(prop: string, value: string) {
-				if (!currentStylingElement) return
-
-				// Apply to the actual DOM
+				if (!currentStylingElement) return // Apply to the actual DOM
 				;(currentStylingElement.style as any)[prop] = value
 
 				const sel = cssPath(currentStylingElement)
@@ -1386,10 +1801,29 @@ export class ElementPickerBrowser {
 		actions: string[] = [],
 		designEdits: Array<{ selector: string; text: string; html: string }> = [],
 		styleEdits: Array<{ selector: string; css: string }> = [],
+		addedCssRules: string[] = [],
+		applyToCode: boolean = false,
+		consoleLogs: string[] = [],
+		networkRequests: string[] = [],
 	): Promise<void> {
-		if (elements.length === 0 && actions.length === 0 && designEdits.length === 0 && styleEdits.length === 0) return
+		if (
+			elements.length === 0 &&
+			actions.length === 0 &&
+			designEdits.length === 0 &&
+			styleEdits.length === 0 &&
+			addedCssRules.length === 0 &&
+			consoleLogs.length === 0 &&
+			networkRequests.length === 0
+		)
+			return
 
 		let parts: string[] = []
+
+		if (applyToCode) {
+			parts.push(
+				`### 🎨 Apply to Code Request\nThe user wants these style changes applied to the source code files.`,
+			)
+		}
 
 		if (elements.length > 0) {
 			parts = elements.map((el, i) => {
@@ -1431,16 +1865,23 @@ export class ElementPickerBrowser {
 			)
 		}
 
-		if (this.capturedErrors.length > 0) {
-			parts.push(`### Captured Errors (Last 50):\n\`\`\`\n` + this.capturedErrors.join("\n") + `\n\`\`\``)
-			this.capturedErrors = [] // Clear after sending
+		if (addedCssRules.length > 0) {
+			parts.push(
+				`### Added CSS Rules:\n` +
+					addedCssRules
+						.map((rule, i) => {
+							return `**Rule ${i + 1}:**\n\`\`\`css\n${rule}\n\`\`\``
+						})
+						.join("\n\n"),
+			)
 		}
 
-		if (this.failedNetworkRequests.length > 0) {
-			parts.push(
-				`### Failed Network Requests (Last 50):\n\`\`\`\n` + this.failedNetworkRequests.join("\n") + `\n\`\`\``,
-			)
-			this.failedNetworkRequests = [] // Clear after sending
+		if (consoleLogs.length > 0) {
+			parts.push(`### Console Output:\n\`\`\`\n` + consoleLogs.join("\n") + `\n\`\`\``)
+		}
+
+		if (networkRequests.length > 0) {
+			parts.push(`### Network Traffic:\n\`\`\`\n` + networkRequests.join("\n") + `\n\`\`\``)
 		}
 
 		const message = `Browser Elements/Actions Selected:\n\n${parts.join("\n\n")}`

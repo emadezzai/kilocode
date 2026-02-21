@@ -41,6 +41,7 @@ export const codebaseIndexConfigSchema = z.object({
 			"vercel-ai-gateway",
 			"bedrock",
 			"openrouter",
+			"voyage", // kilocode_change
 		])
 		.optional(),
 	// kilocode_change start

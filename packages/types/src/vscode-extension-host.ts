@@ -170,6 +170,7 @@ export interface ExtensionMessage {
 		| "currentCheckpointUpdated"
 		| "checkpointInitWarning"
 		| "insertTextToChatArea" // kilocode_change
+		| "openBrowserPanel" // kilocode_change
 		| "showHumanRelayDialog"
 		| "humanRelayResponse"
 		| "humanRelayCancel"
@@ -1060,6 +1061,7 @@ export interface WebviewMessage {
 			| "vercel-ai-gateway"
 			| "bedrock"
 			| "openrouter"
+			| "voyage" // kilocode_change
 		codebaseIndexVectorStoreProvider?: "lancedb" | "qdrant" // kilocode_change
 		codebaseIndexLancedbVectorStoreDirectory?: string // kilocode_change
 		codebaseIndexEmbedderBaseUrl?: string

@@ -689,13 +689,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: currentPageIndex === 0 || isBrowsing ? "not-allowed" : "pointer",
 								opacity: currentPageIndex === 0 || isBrowsing ? 0.4 : 0.85,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Go to beginning">
 							<ChevronsLeft className="w-4 h-4" />
+							<span className="text-xs">First</span>
 						</button>
 					</StandardTooltip>
 
@@ -714,13 +716,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: currentPageIndex === 0 || isBrowsing ? "not-allowed" : "pointer",
 								opacity: currentPageIndex === 0 || isBrowsing ? 0.4 : 0.85,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Back">
 							<ArrowLeft className="w-4 h-4" />
+							<span className="text-xs">Back</span>
 						</button>
 					</StandardTooltip>
 
@@ -741,13 +745,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: currentPageIndex === pages.length - 1 || isBrowsing ? "not-allowed" : "pointer",
 								opacity: currentPageIndex === pages.length - 1 || isBrowsing ? 0.4 : 0.85,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Forward">
 							<ArrowRight className="w-4 h-4" />
+							<span className="text-xs">Forward</span>
 						</button>
 					</StandardTooltip>
 
@@ -767,13 +773,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: currentPageIndex === pages.length - 1 || isBrowsing ? "not-allowed" : "pointer",
 								opacity: currentPageIndex === pages.length - 1 || isBrowsing ? 0.4 : 0.85,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Go to end">
 							<ChevronsRight className="w-4 h-4" />
+							<span className="text-xs">Last</span>
 						</button>
 					</StandardTooltip>
 
@@ -822,13 +830,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: "pointer",
 								opacity: 0.85,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Disconnect session">
 							<OctagonX className="w-4 h-4" />
+							<span className="text-xs">Disconnect</span>
 						</button>
 					</StandardTooltip>
 
@@ -847,14 +857,16 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: displayState.url ? "pointer" : "not-allowed",
 								opacity: displayState.url ? 0.85 : 0.4,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Open external"
 							disabled={!displayState.url}>
 							<ExternalLink className="w-4 h-4" />
+							<span className="text-xs">External</span>
 						</button>
 					</StandardTooltip>
 
@@ -875,13 +887,15 @@ const BrowserSessionRow = memo((props: BrowserSessionRowProps) => {
 								borderRadius: 4,
 								cursor: "pointer",
 								opacity: 0.85,
-								padding: "4px",
+								padding: "4px 8px",
 								display: "flex",
 								alignItems: "center",
+								gap: "4px",
 								color: "var(--vscode-foreground)",
 							}}
 							aria-label="Copy URL">
 							<Copy className="w-4 h-4" />
+							<span className="text-xs">Copy URL</span>
 						</button>
 					</StandardTooltip>
 				</div>
