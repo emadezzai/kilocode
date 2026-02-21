@@ -1410,6 +1410,9 @@ export const webviewMessageHandler = async (
 			// Cancel any pending auto-approval timeout for the current task
 			provider.getCurrentTask()?.cancelAutoApprovalTimeout()
 			break
+		case "openBrowserPanel":
+			await vscode.commands.executeCommand("kilo-code.openBrowserPanel")
+			break
 		case "killBrowserSession":
 			{
 				const task = provider.getCurrentTask()

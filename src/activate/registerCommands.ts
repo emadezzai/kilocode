@@ -129,6 +129,10 @@ const getCommandsMap = ({ context, outputChannel }: RegisterCommandOptions): Rec
 
 		return openClineInNewTab({ context, outputChannel })
 	},
+	openBrowserPanel: async () => {
+		const { ElementPickerBrowser } = await import("../integrations/browser/BrowserPanel")
+		await ElementPickerBrowser.launch()
+	},
 	open: () => openClineInNewTab({ context, outputChannel }), // kilocode_change
 	openInNewTab: () => openClineInNewTab({ context, outputChannel }),
 	settingsButtonClicked: () => {

@@ -937,6 +937,7 @@ export interface WebviewMessage {
 		| "deniedCommands"
 		| "killBrowserSession"
 		| "openBrowserSessionPanel"
+		| "openBrowserPanel"
 		| "showBrowserSessionPanelAtStep"
 		| "refreshBrowserSessionPanel"
 		| "browserPanelDidLaunch"

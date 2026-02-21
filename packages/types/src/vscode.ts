@@ -40,6 +40,7 @@ export const commandIds = [
 	"settingsButtonClicked",
 
 	"openInNewTab",
+	"openBrowserPanel",
 	"open", // kilocode_change
 	"agentManagerOpen", // kilocode_change
 
