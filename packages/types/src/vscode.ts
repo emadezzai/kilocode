@@ -41,6 +41,7 @@ export const commandIds = [
 
 	"openInNewTab",
 	"openBrowserPanel",
+	"browser.inject",
 	"open", // kilocode_change
 	"agentManagerOpen", // kilocode_change
 

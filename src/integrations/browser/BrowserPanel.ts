@@ -9,11 +9,13 @@ import { ClineProvider } from "../../core/webview/ClineProvider"
  * them to the Kilo Code chat.
  */
 export class ElementPickerBrowser {
-	private static instance: ElementPickerBrowser | undefined
+	public static instance: ElementPickerBrowser | undefined
 	private browser: Browser | undefined
-	private page: Page | undefined
+	public page: Page | undefined
 	private chromeProcess: chromeLauncher.LaunchedChrome | undefined
 	private statusBarItem: vscode.StatusBarItem | undefined
+	private capturedErrors: string[] = []
+	private failedNetworkRequests: string[] = []
 
 	public static async launch() {
 		// If already running, focus it
@@ -109,13 +111,30 @@ export class ElementPickerBrowser {
 		try {
 			await page.exposeFunction("__clineSendElements", async (json: string) => {
 				try {
-					const elements = JSON.parse(json) as Array<{
-						selector: string
-						xpath: string
-						html: string
-						tagName: string
-					}>
-					await this.sendElementsToChat(elements)
+					const payload = JSON.parse(json) as {
+						elements: Array<{
+							selector: string
+							xpath: string
+							html: string
+							tagName: string
+							componentName?: string
+							sourceFile?: string
+						}>
+						actions: string[]
+						designEdits?: Array<{ selector: string; text: string; html: string }>
+						styleEdits?: Array<{ selector: string; css: string }>
+					}
+					// Support for backward compatibility if old payload was cached
+					if (Array.isArray(payload)) {
+						await this.sendElementsToChat(payload, [], [], [])
+					} else {
+						await this.sendElementsToChat(
+							payload.elements || [],
+							payload.actions || [],
+							payload.designEdits || [],
+							payload.styleEdits || [],
+						)
+					}
 				} catch (err) {
 					console.error("Failed to process elements:", err)
 				}
@@ -123,6 +142,34 @@ export class ElementPickerBrowser {
 		} catch {
 			// Already exposed
 		}
+
+		// Attach listeners for Console Errors
+		page.on("console", (msg) => {
+			if (msg.type() === "error") {
+				this.capturedErrors.push(`[Console Error] ${msg.text()}`)
+				if (this.capturedErrors.length > 50) this.capturedErrors.shift()
+			}
+		})
+		page.on("pageerror", (error) => {
+			this.capturedErrors.push(`[Page Error] ${error.message}`)
+			if (this.capturedErrors.length > 50) this.capturedErrors.shift()
+		})
+
+		// Attach listeners for Failed Network Requests
+		page.on("requestfailed", (request) => {
+			this.failedNetworkRequests.push(
+				`[Request Failed] ${request.method()} ${request.url()} - ${request.failure()?.errorText || "Unknown error"}`,
+			)
+			if (this.failedNetworkRequests.length > 50) this.failedNetworkRequests.shift()
+		})
+		page.on("response", (response) => {
+			if (!response.ok()) {
+				this.failedNetworkRequests.push(
+					`[Response Error] ${response.request().method()} ${response.url()} - Status: ${response.status()}`,
+				)
+				if (this.failedNetworkRequests.length > 50) this.failedNetworkRequests.shift()
+			}
+		})
 
 		// Auto-inject on every future navigation
 		const script = this.getPickerScript()
@@ -197,16 +244,34 @@ export class ElementPickerBrowser {
 						0%,100% { box-shadow:0 0 0 0 rgba(208,0,0,0.4); }
 						50% { box-shadow:0 0 0 6px rgba(208,0,0,0); }
 					}
+					.cline-btn-record { background:#9C27B0; color:#fff; }
+					.cline-btn-record:hover { background:#ab47bc; }
+					.cline-btn-record.active { background:#d00000; animation:pulse 1.5s infinite; }
+					.cline-btn-design { background:#4CAF50; color:#fff; }
+					.cline-btn-design:hover { background:#66bb6a; }
+					.cline-btn-design.active { background:#d00000; animation:pulse 1.5s infinite; }
 					.cline-btn-send { background:#2196F3; color:#fff; }
 					.cline-btn-send:hover { background:#42a5f5; }
 					.cline-btn-send:disabled { opacity:0.4; cursor:not-allowed; }
 					.cline-btn-clear { background:rgba(255,255,255,0.1); color:#aaa; }
 					.cline-btn-clear:hover { background:rgba(255,255,255,0.2); color:#fff; }
+					.cline-btn-style { background:#FF9800; color:#fff; }
+					.cline-btn-style:hover { background:#FFB74D; }
+					.cline-btn-style.active { background:#d00000; animation:pulse 1.5s infinite; }
 					.cline-tag {
 						display:inline-flex; align-items:center; gap:4px;
 						padding:3px 8px; background:rgba(232,93,4,0.2);
 						border:1px solid rgba(232,93,4,0.4); border-radius:4px;
 						font-size:11px; color:#f48c06;
+					}
+					.cline-tag.action {
+						background:rgba(156,39,176,0.2); border-color:rgba(156,39,176,0.4); color:#e1bee7;
+					}
+					.cline-tag.design {
+						background:rgba(76,175,80,0.2); border-color:rgba(76,175,80,0.4); color:#a5d6a7;
+					}
+					.cline-tag.style {
+						background:rgba(255,152,0,0.2); border-color:rgba(255,152,0,0.4); color:#FFE0B2;
 					}
 					.cline-tag-x { cursor:pointer; opacity:0.6; font-size:14px; line-height:1; }
 					.cline-tag-x:hover { opacity:1; }
@@ -220,14 +285,91 @@ export class ElementPickerBrowser {
 					.cline-bar.mini .cline-left,
 					.cline-bar.mini .cline-center,
 					.cline-bar.mini .cline-right { display:none; }
+					
+					/* Advanced Style Editor UI */
+					.cline-inspector {
+						display: none; position: fixed; right: 20px; top: 20px; width: 320px;
+						background: #1e1e2e; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+						box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,152,0,0.2); 
+						z-index: 2147483648; color: #e0e0e0; font-family: -apple-system, sans-serif; font-size: 13px;
+						flex-direction: column; max-height: 85vh; 
+						backdrop-filter: blur(10px);
+						animation: slideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+					}
+					@keyframes slideIn { from { opacity: 0; transform: translateY(-10px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+					.cline-inspector.active { display: flex; }
+					.cline-inspector-header {
+						padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.08);
+						font-weight: 700; font-size: 14px; display: flex; justify-content: space-between; align-items: center;
+						background: rgba(0,0,0,0.2); border-radius: 12px 12px 0 0; color: #fff;
+						user-select: none; cursor: move;
+					}
+					.cline-inspector-header span.close-btn { cursor: pointer; color: #888; font-size: 18px; line-height: 1; transition: color 0.15s; }
+					.cline-inspector-header span.close-btn:hover { color: #f44336; }
+					.cline-inspector-body { 
+						padding: 16px; display: flex; flex-direction: column; gap: 16px; 
+						overflow-y: auto; overflow-x: hidden;
+					}
+					.cline-inspector-body::-webkit-scrollbar { width: 6px; }
+					.cline-inspector-body::-webkit-scrollbar-track { background: transparent; }
+					.cline-inspector-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 3px; }
+					.cline-inspector-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+					.cline-inspector-target { 
+						font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; 
+						color: #FFB74D; word-break: break-all; font-size: 11px; margin-bottom: 4px; 
+						padding: 10px; background: rgba(255,152,0,0.1); border-radius: 6px;
+						border: 1px dashed rgba(255,152,0,0.3);
+						line-height: 1.4;
+					}
+					.cline-prop-group { display: flex; flex-direction: column; gap: 8px; }
+					.cline-prop-group label { color: #888; font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 700; text-align: right; }
+					.cline-prop-row { display: flex; align-items: center; gap: 8px; }
+					.cline-prop-row input {
+						flex: 1; background: #11111a; border: 1px solid rgba(255,255,255,0.1);
+						color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 12px;
+						transition: all 0.15s; width: 0; min-width: 0;
+					}
+					.cline-prop-row input:focus { outline: none; border-color: #FF9800; background: #1a1a2e; box-shadow: 0 0 0 2px rgba(255,152,0,0.2); }
+					.cline-prop-row input:hover:not(:focus) { border-color: rgba(255,255,255,0.3); }
+					.cline-prop-row input[type="color"] { width: 36px; height: 36px; padding: 2px; cursor: pointer; flex: none; border-radius: 6px; }
+					.cline-prop-row input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+					.cline-prop-row input[type="color"]::-webkit-color-swatch { border-radius: 4px; border: none; }
+					.cline-prop-row select {
+						flex: 1; background: #11111a; border: 1px solid rgba(255,255,255,0.1);
+						color: #fff; padding: 8px 10px; border-radius: 6px; font-size: 12px;
+						transition: all 0.15s; width: 0; min-width: 0;
+						cursor: pointer; appearance: none;
+						background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+						background-repeat: no-repeat; background-position: right 8px center;
+						padding-right: 28px;
+					}
+					.cline-prop-row select:focus { outline: none; border-color: #FF9800; background-color: #1a1a2e; box-shadow: 0 0 0 2px rgba(255,152,0,0.2); }
+					.cline-prop-row select:hover:not(:focus) { border-color: rgba(255,255,255,0.3); }
+					.cline-prop-row select option { background: #1e1e2e; color: #fff; }
+					
+					.cline-inspector-footer {
+						padding: 12px 16px; border-top: 1px solid rgba(255,255,255,0.08);
+						background: rgba(0,0,0,0.2); border-radius: 0 0 12px 12px;
+					}
+					.cline-btn-inspector-send {
+						width: 100%; padding: 10px; border: none; border-radius: 6px; cursor: pointer;
+						font-size: 13px; font-weight: 600; background: linear-gradient(135deg, #FF9800, #F57C00);
+						color: #fff; transition: all 0.2s; box-shadow: 0 4px 12px rgba(255,152,0,0.3);
+						display: flex; justify-content: center; align-items: center; gap: 6px;
+					}
+					.cline-btn-inspector-send:hover { background: linear-gradient(135deg, #FFB74D, #FF9800); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(255,152,0,0.4); }
+					.cline-btn-inspector-send:active { transform: translateY(1px); box-shadow: 0 2px 8px rgba(255,152,0,0.3); }
 				</style>
 				<div class="cline-bar" id="bar">
 					<div class="cline-left">
 						<span class="cline-brand">🎯 Kilo Code</span>
 						<button class="cline-btn cline-btn-pick" id="pickBtn">Pick Element</button>
+						<button class="cline-btn cline-btn-record" id="recordBtn">⏺ Record Actions</button>
+						<button class="cline-btn cline-btn-design" id="designBtn">🎨 Design Mode</button>
+						<button class="cline-btn cline-btn-style" id="styleBtn">💅 Style Editor</button>
 					</div>
 					<div class="cline-center" id="tags">
-						<span class="cline-count">Click "Pick Element" to start</span>
+						<span class="cline-count">Click "Pick Element", "Record Actions", "Design Mode", or "Style Editor"</span>
 					</div>
 					<div class="cline-right">
 						<button class="cline-btn cline-btn-clear" id="clearBtn" style="display:none">Clear</button>
@@ -235,21 +377,330 @@ export class ElementPickerBrowser {
 					</div>
 					<button class="cline-min" id="minBtn" title="Minimize">▾</button>
 				</div>
+				
+				<!-- Style Editor Inspector Overlay -->
+				<div class="cline-inspector" id="cssInspector">
+					<div class="cline-inspector-header">
+						<span class="close-btn" id="inspectorClose" title="Close">✕</span>
+						CSS Editor
+					</div>
+					<div class="cline-inspector-body">
+						<div class="cline-inspector-target" id="inspectorTarget">No element selected</div>
+						<div class="cline-prop-group">
+							<label>Dimensions</label>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-width" placeholder="Width" title="Width" />
+								<input type="text" id="prop-height" placeholder="Height" title="Height" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-min-width" placeholder="Min W" title="Min Width" />
+								<input type="text" id="prop-max-width" placeholder="Max W" title="Max Width" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-min-height" placeholder="Min H" title="Min Height" />
+								<input type="text" id="prop-max-height" placeholder="Max H" title="Max Height" />
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Spacing</label>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-margin" placeholder="Margin" title="Margin" />
+								<input type="text" id="prop-padding" placeholder="Padding" title="Padding" />
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Typography</label>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-font-size" placeholder="Size" title="Font Size" />
+								<select id="prop-font-weight" title="Font Weight">
+									<option value="">Weight</option>
+									<option value="100">100 (Thin)</option>
+									<option value="200">200</option>
+									<option value="300">300 (Light)</option>
+									<option value="400">400 (Normal)</option>
+									<option value="500">500 (Medium)</option>
+									<option value="600">600 (Semi)</option>
+									<option value="700">700 (Bold)</option>
+									<option value="800">800</option>
+									<option value="900">900 (Black)</option>
+								</select>
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-font-family" placeholder="Font Family" title="Font Family" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-line-height" placeholder="Line Height" title="Line Height" />
+								<input type="text" id="prop-letter-spacing" placeholder="Letter Spacing" title="Letter Spacing" />
+							</div>
+							<div class="cline-prop-row">
+								<select id="prop-text-align" title="Text Align">
+									<option value="">Align</option>
+									<option value="left">left</option>
+									<option value="center">center</option>
+									<option value="right">right</option>
+									<option value="justify">justify</option>
+									<option value="start">start</option>
+									<option value="end">end</option>
+								</select>
+								<select id="prop-text-decoration" title="Text Decoration">
+									<option value="">Decoration</option>
+									<option value="none">none</option>
+									<option value="underline">underline</option>
+									<option value="overline">overline</option>
+									<option value="line-through">line-through</option>
+								</select>
+							</div>
+							<div class="cline-prop-row">
+								<select id="prop-text-transform" title="Text Transform">
+									<option value="">Transform</option>
+									<option value="none">none</option>
+									<option value="uppercase">uppercase</option>
+									<option value="lowercase">lowercase</option>
+									<option value="capitalize">capitalize</option>
+								</select>
+								<select id="prop-white-space" title="White Space">
+									<option value="">White Space</option>
+									<option value="normal">normal</option>
+									<option value="nowrap">nowrap</option>
+									<option value="pre">pre</option>
+									<option value="pre-wrap">pre-wrap</option>
+									<option value="pre-line">pre-line</option>
+									<option value="break-spaces">break-spaces</option>
+								</select>
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Colors & Background</label>
+							<div class="cline-prop-row" title="Text Color">
+								<input type="color" id="prop-color" />
+								<input type="text" id="prop-color-text" placeholder="Text Color" />
+							</div>
+							<div class="cline-prop-row" title="Background Color">
+								<input type="color" id="prop-bg" />
+								<input type="text" id="prop-bg-text" placeholder="Background" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-opacity" placeholder="Opacity (0-1)" title="Opacity" />
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Borders & Radius</label>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-border" placeholder="Border" title="Border" />
+								<input type="text" id="prop-radius" placeholder="Radius" title="Border Radius" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-outline" placeholder="Outline" title="Outline" />
+								<input type="text" id="prop-box-shadow" placeholder="Box Shadow" title="Box Shadow" />
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Layout (Flex/Grid)</label>
+							<div class="cline-prop-row">
+								<select id="prop-display" title="Display">
+									<option value="">Display</option>
+									<option value="block">block</option>
+									<option value="inline">inline</option>
+									<option value="inline-block">inline-block</option>
+									<option value="flex">flex</option>
+									<option value="inline-flex">inline-flex</option>
+									<option value="grid">grid</option>
+									<option value="inline-grid">inline-grid</option>
+									<option value="table">table</option>
+									<option value="none">none</option>
+									<option value="contents">contents</option>
+								</select>
+								<input type="text" id="prop-gap" placeholder="Gap" title="Gap" />
+							</div>
+							<div class="cline-prop-row">
+								<select id="prop-flex-direction" title="Flex Direction">
+									<option value="">Flex Dir</option>
+									<option value="row">row</option>
+									<option value="row-reverse">row-reverse</option>
+									<option value="column">column</option>
+									<option value="column-reverse">column-reverse</option>
+								</select>
+								<select id="prop-flex-wrap" title="Flex Wrap">
+									<option value="">Wrap</option>
+									<option value="nowrap">nowrap</option>
+									<option value="wrap">wrap</option>
+									<option value="wrap-reverse">wrap-reverse</option>
+								</select>
+							</div>
+							<div class="cline-prop-row">
+								<select id="prop-justify" title="Justify Content">
+									<option value="">Justify</option>
+									<option value="flex-start">flex-start</option>
+									<option value="flex-end">flex-end</option>
+									<option value="center">center</option>
+									<option value="space-between">space-between</option>
+									<option value="space-around">space-around</option>
+									<option value="space-evenly">space-evenly</option>
+									<option value="stretch">stretch</option>
+								</select>
+								<select id="prop-align" title="Align Items">
+									<option value="">Align</option>
+									<option value="stretch">stretch</option>
+									<option value="flex-start">flex-start</option>
+									<option value="flex-end">flex-end</option>
+									<option value="center">center</option>
+									<option value="baseline">baseline</option>
+								</select>
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Positioning</label>
+							<div class="cline-prop-row">
+								<select id="prop-position" title="Position">
+									<option value="">Position</option>
+									<option value="static">static</option>
+									<option value="relative">relative</option>
+									<option value="absolute">absolute</option>
+									<option value="fixed">fixed</option>
+									<option value="sticky">sticky</option>
+								</select>
+								<input type="text" id="prop-z-index" placeholder="Z-Index" title="Z-Index" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-top" placeholder="Top" title="Top" />
+								<input type="text" id="prop-right" placeholder="Right" title="Right" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-bottom" placeholder="Bottom" title="Bottom" />
+								<input type="text" id="prop-left" placeholder="Left" title="Left" />
+							</div>
+						</div>
+						<div class="cline-prop-group">
+							<label>Effects & Misc</label>
+							<div class="cline-prop-row">
+								<select id="prop-overflow" title="Overflow">
+									<option value="">Overflow</option>
+									<option value="visible">visible</option>
+									<option value="hidden">hidden</option>
+									<option value="scroll">scroll</option>
+									<option value="auto">auto</option>
+									<option value="clip">clip</option>
+								</select>
+								<select id="prop-cursor" title="Cursor">
+									<option value="">Cursor</option>
+									<option value="default">default</option>
+									<option value="pointer">pointer</option>
+									<option value="text">text</option>
+									<option value="move">move</option>
+									<option value="grab">grab</option>
+									<option value="crosshair">crosshair</option>
+									<option value="wait">wait</option>
+									<option value="not-allowed">not-allowed</option>
+									<option value="none">none</option>
+									<option value="help">help</option>
+								</select>
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-transition" placeholder="Transition" title="Transition" />
+							</div>
+							<div class="cline-prop-row">
+								<input type="text" id="prop-transform" placeholder="Transform" title="Transform" />
+							</div>
+						</div>
+					</div>
+					<div class="cline-inspector-footer">
+						<button class="cline-btn-inspector-send" id="inspectorSendBtn">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+							Send Styles to Chat
+						</button>
+					</div>
+				</div>
 			`
 
 			document.documentElement.appendChild(root)
 
 			const bar = shadow.getElementById("bar")!
 			const pickBtn = shadow.getElementById("pickBtn")!
+			const recordBtn = shadow.getElementById("recordBtn")!
+			const designBtn = shadow.getElementById("designBtn")!
+			const styleBtn = shadow.getElementById("styleBtn")!
 			const sendBtn = shadow.getElementById("sendBtn")! as HTMLButtonElement
 			const clearBtn = shadow.getElementById("clearBtn")! as HTMLElement
 			const tags = shadow.getElementById("tags")!
 			const minBtn = shadow.getElementById("minBtn")!
 
+			// Inspector Elements
+			const cssInspector = shadow.getElementById("cssInspector")!
+			const inspectorHeader = cssInspector.querySelector(".cline-inspector-header")!
+			const inspectorClose = shadow.getElementById("inspectorClose")!
+			const inspectorTarget = shadow.getElementById("inspectorTarget")!
+			const inspectorSendBtn = shadow.getElementById("inspectorSendBtn")!
+
 			let pickerOn = false
-			let selected: Array<{ selector: string; xpath: string; html: string; tagName: string }> = []
+			let recordingOn = false
+			let designOn = false
+			let stylingOn = false
+			let currentStylingElement: HTMLElement | null = null
+
+			let selected: Array<{
+				selector: string
+				xpath: string
+				html: string
+				tagName: string
+				componentName?: string
+				sourceFile?: string
+			}> = []
+			let recordedActions: string[] = []
+			let designEdits: Array<{ selector: string; text: string; html: string; timer?: any }> = []
+			let styleEdits: Array<{ selector: string; css: string }> = []
 			let hovered: HTMLElement | null = null
 			let isMin = false
+
+			function saveState() {
+				try {
+					sessionStorage.setItem(
+						"cline_picker_state",
+						JSON.stringify({
+							selected,
+							recordedActions,
+							designEdits: designEdits.map((d) => ({ selector: d.selector, text: d.text, html: d.html })),
+							styleEdits: styleEdits.map((s) => ({ selector: s.selector, css: s.css })),
+							isMin,
+							pickerOn,
+							recordingOn,
+							designOn,
+							stylingOn,
+							inspectorPos: {
+								left: cssInspector.style.left,
+								top: cssInspector.style.top,
+							},
+						}),
+					)
+				} catch (e) {}
+			}
+
+			try {
+				const saved = JSON.parse(sessionStorage.getItem("cline_picker_state") || "{}")
+				if (saved.selected) selected = saved.selected
+				if (saved.recordedActions) recordedActions = saved.recordedActions
+				if (saved.designEdits) designEdits = saved.designEdits
+				if (saved.styleEdits) styleEdits = saved.styleEdits
+				if (saved.isMin) {
+					isMin = true
+					bar.classList.add("mini")
+					minBtn.textContent = "▴ Kilo Code"
+				}
+				// Restore session toggles
+				if (saved.pickerOn) {
+					setTimeout(() => pickBtn.click(), 0)
+				} else if (saved.recordingOn) {
+					setTimeout(() => recordBtn.click(), 0)
+				} else if (saved.designOn) {
+					setTimeout(() => designBtn.click(), 0)
+				} else if (saved.stylingOn) {
+					setTimeout(() => styleBtn.click(), 0)
+				}
+				if (saved.inspectorPos) {
+					cssInspector.style.left = saved.inspectorPos.left
+					cssInspector.style.top = saved.inspectorPos.top
+					if (saved.inspectorPos.left) cssInspector.style.right = "auto"
+				}
+			} catch (e) {}
 
 			const pickerCSS = document.createElement("style")
 			pickerCSS.id = "cline-picker-css"
@@ -258,13 +709,58 @@ export class ElementPickerBrowser {
 				.cline-selected { outline:3px solid #2196F3 !important; outline-offset:2px !important; background-color:rgba(33,150,243,0.08) !important; }
 			`
 
+			// Draggable logic for Inspector
+			let isDragging = false
+			let startX = 0,
+				startY = 0
+			let initialLeft = 0,
+				initialTop = 0
+
+			inspectorHeader.addEventListener("mousedown", (e: any) => {
+				isDragging = true
+				startX = e.clientX
+				startY = e.clientY
+				const rect = cssInspector.getBoundingClientRect()
+				initialLeft = rect.left
+				initialTop = rect.top
+				saveState()
+			})
+
+			document.addEventListener("mousemove", (e) => {
+				if (!isDragging) return
+				const dx = e.clientX - startX
+				const dy = e.clientY - startY
+
+				let newLeft = initialLeft + dx
+				let newTop = initialTop + dy
+
+				// Keep within bounds
+				const rect = cssInspector.getBoundingClientRect()
+				newLeft = Math.max(0, Math.min(newLeft, window.innerWidth - rect.width))
+				newTop = Math.max(0, Math.min(newTop, window.innerHeight - rect.height))
+
+				cssInspector.style.left = newLeft + "px"
+				cssInspector.style.top = newTop + "px"
+				cssInspector.style.right = "auto" // Override the initial right:20px
+			})
+
+			document.addEventListener("mouseup", () => {
+				if (isDragging) {
+					isDragging = false
+					saveState()
+				}
+			})
+
 			minBtn.addEventListener("click", () => {
 				isMin = !isMin
 				bar.classList.toggle("mini", isMin)
 				minBtn.textContent = isMin ? "▴ Kilo Code" : "▾"
+				saveState()
 			})
 
 			pickBtn.addEventListener("click", () => {
+				if (recordingOn) recordBtn.click() // Mutual exclusion
+				if (designOn) designBtn.click() // Mutual exclusion
 				pickerOn = !pickerOn
 				pickBtn.classList.toggle("active", pickerOn)
 				pickBtn.textContent = pickerOn ? "⏹ Stop" : "Pick Element"
@@ -283,13 +779,345 @@ export class ElementPickerBrowser {
 						hovered = null
 					}
 				}
+				saveState()
 			})
 
+			recordBtn.addEventListener("click", () => {
+				if (pickerOn) pickBtn.click() // Mutual exclusion
+				if (designOn) designBtn.click() // Mutual exclusion
+				recordingOn = !recordingOn
+				recordBtn.classList.toggle("active", recordingOn)
+				recordBtn.textContent = recordingOn ? "⏹ Stop Recording" : "⏺ Record Actions"
+				if (recordingOn) {
+					document.addEventListener("click", onRecordClick, true)
+					document.addEventListener("change", onRecordChange, true)
+				} else {
+					document.removeEventListener("click", onRecordClick, true)
+					document.removeEventListener("change", onRecordChange, true)
+				}
+				saveState()
+			})
+
+			designBtn.addEventListener("click", () => {
+				if (pickerOn) pickBtn.click()
+				if (recordingOn) recordBtn.click()
+				if (stylingOn) styleBtn.click() // Mutual exclusion
+				designOn = !designOn
+				designBtn.classList.toggle("active", designOn)
+				designBtn.textContent = designOn ? "⏹ Stop Design Mode" : "🎨 Design Mode"
+				if (designOn) {
+					document.designMode = "on"
+					document.addEventListener("input", onDesignInput, true)
+					// Disable links
+					document.addEventListener("click", preventLinksInDesign, true)
+				} else {
+					document.designMode = "off"
+					document.removeEventListener("input", onDesignInput, true)
+					document.removeEventListener("click", preventLinksInDesign, true)
+				}
+				saveState()
+			})
+
+			function preventLinksInDesign(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || root.contains(t) || cssInspector.contains(t)) return
+				if (t.tagName.toLowerCase() === "a" || t.closest("a")) {
+					e.preventDefault()
+				}
+			}
+
+			styleBtn.addEventListener("click", () => {
+				if (pickerOn) pickBtn.click()
+				if (recordingOn) recordBtn.click()
+				if (designOn) designBtn.click()
+				stylingOn = !stylingOn
+				styleBtn.classList.toggle("active", stylingOn)
+				styleBtn.textContent = stylingOn ? "⏹ Stop Styling" : "💅 Style Editor"
+				if (stylingOn) {
+					document.addEventListener("mouseover", onStyleOver, true)
+					document.addEventListener("mouseout", onStyleOut, true)
+					document.addEventListener("click", onStyleClick, true)
+					cssInspector.classList.add("active")
+				} else {
+					document.removeEventListener("mouseover", onStyleOver, true)
+					document.removeEventListener("mouseout", onStyleOut, true)
+					document.removeEventListener("click", onStyleClick, true)
+					cssInspector.classList.remove("active")
+					currentStylingElement = null
+					if (hovered) {
+						hovered.classList.remove("cline-hover")
+						hovered = null
+					}
+				}
+				saveState()
+			})
+
+			inspectorClose.addEventListener("click", () => {
+				if (stylingOn) styleBtn.click()
+			})
+			inspectorSendBtn.addEventListener("click", () => {
+				sendBtn.click() // Triggers the unified send function
+			})
+
+			// Utility: keyboard increment/decrement for numeric inputs
+			function handleNumericKeyboard(e: KeyboardEvent, input: HTMLInputElement, prop: string) {
+				if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+					e.preventDefault()
+					const val = input.value
+					const match = val.match(/^(-?\\d*\\.?\\d+)(px|%|em|rem|vh|vw|pt)?$/)
+					if (match) {
+						let num = parseFloat(match[1])
+						const unit = match[2] || ""
+						const step = e.shiftKey ? 10 : 1
+						const newVal = `${Number.isInteger(num) ? num : parseFloat(num.toFixed(2))}${unit}`
+						input.value = newVal
+						applyStyleToCurrent(prop, newVal)
+					}
+				}
+			}
+
+			// Setup CSS Input Listeners — map CSS prop to input element ID
+			const cssPropMap: Record<string, string> = {
+				width: "width",
+				height: "height",
+				"min-width": "min-width",
+				"max-width": "max-width",
+				"min-height": "min-height",
+				"max-height": "max-height",
+				margin: "margin",
+				padding: "padding",
+				"font-size": "font-size",
+				"font-weight": "font-weight",
+				"font-family": "font-family",
+				"line-height": "line-height",
+				"letter-spacing": "letter-spacing",
+				"text-align": "text-align",
+				"text-decoration": "text-decoration",
+				"text-transform": "text-transform",
+				"white-space": "white-space",
+				border: "border",
+				"border-radius": "radius",
+				outline: "outline",
+				"box-shadow": "box-shadow",
+				display: "display",
+				gap: "gap",
+				"flex-direction": "flex-direction",
+				"flex-wrap": "flex-wrap",
+				"justify-content": "justify",
+				"align-items": "align",
+				position: "position",
+				"z-index": "z-index",
+				top: "top",
+				right: "right",
+				bottom: "bottom",
+				left: "left",
+				overflow: "overflow",
+				cursor: "cursor",
+				opacity: "opacity",
+				transition: "transition",
+				transform: "transform",
+			}
+			Object.entries(cssPropMap).forEach(([prop, id]) => {
+				const el = cssInspector.querySelector(`#prop-${id}`) as HTMLInputElement | HTMLSelectElement
+				if (el) {
+					const eventName = el.tagName === "SELECT" ? "change" : "input"
+					el.addEventListener(eventName, (e) => {
+						const val = (e.target as HTMLInputElement | HTMLSelectElement).value
+						applyStyleToCurrent(prop, val)
+					})
+					if (el.tagName === "INPUT") {
+						el.addEventListener("keydown", (e) =>
+							handleNumericKeyboard(e as KeyboardEvent, el as HTMLInputElement, prop),
+						)
+					}
+				}
+			})
+
+			// Color inputs
+			const colorTextInputs = ["color-text", "bg-text"]
+			const colorTypeInputs = ["color", "bg"]
+			colorTextInputs.forEach((id, i) => {
+				const textInput = cssInspector.querySelector(`#prop-${id}`) as HTMLInputElement
+				const colorInput = cssInspector.querySelector(`#prop-${colorTypeInputs[i]}`) as HTMLInputElement
+				const prop = id === "color-text" ? "color" : "background-color"
+
+				if (textInput && colorInput) {
+					textInput.addEventListener("input", (e) => {
+						const val = (e.target as HTMLInputElement).value
+						applyStyleToCurrent(prop, val)
+						// attempt to sync color picker if hex
+						if (val.startsWith("#") && (val.length === 4 || val.length === 7)) {
+							colorInput.value =
+								val.length === 4 ? "#" + val[1] + val[1] + val[2] + val[2] + val[3] + val[3] : val
+						}
+					})
+					colorInput.addEventListener("input", (e) => {
+						const val = (e.target as HTMLInputElement).value
+						applyStyleToCurrent(prop, val)
+						textInput.value = val
+					})
+				}
+			})
+
+			function applyStyleToCurrent(prop: string, value: string) {
+				if (!currentStylingElement) return
+
+				// Apply to the actual DOM
+				;(currentStylingElement.style as any)[prop] = value
+
+				const sel = cssPath(currentStylingElement)
+				let editObj = styleEdits.find((s) => s.selector === sel)
+				if (!editObj) {
+					editObj = { selector: sel, css: "" }
+					styleEdits.push(editObj)
+				}
+
+				// Build a fresh CSS string for this element based on inline styles
+				editObj.css = currentStylingElement.style.cssText
+				refreshUI()
+			}
+
+			function onStyleOver(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || root.contains(t) || cssInspector.contains(t)) return
+				e.preventDefault()
+				e.stopPropagation()
+				if (t === hovered) return
+				if (hovered) hovered.classList.remove("cline-hover")
+				t.classList.add("cline-hover")
+				hovered = t
+			}
+
+			function onStyleOut(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || cssInspector.contains(t)) return
+				t.classList.remove("cline-hover")
+				if (hovered === t) hovered = null
+			}
+
+			function onStyleClick(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || root.contains(t) || cssInspector.contains(t)) return
+				e.preventDefault()
+				e.stopPropagation()
+				e.stopImmediatePropagation()
+
+				t.classList.remove("cline-hover")
+				currentStylingElement = t
+
+				// Get component name safely
+				let componentName = ""
+				try {
+					const fiberKey = Object.keys(t).find((k) => k.startsWith("__reactFiber$"))
+					if (fiberKey) {
+						let fiber = (t as any)[fiberKey]
+						while (fiber) {
+							if (fiber.type && typeof fiber.type === "function") {
+								componentName = `<${fiber.type.name}>`
+								break
+							}
+							fiber = fiber.return
+						}
+					}
+				} catch (er) {}
+
+				inspectorTarget.textContent = componentName ? `${componentName} ${cssPath(t)}` : cssPath(t)
+				populateInspectorInputs(t)
+			}
+
+			function populateInspectorInputs(el: HTMLElement) {
+				const computed = window.getComputedStyle(el)
+
+				// Helper to gently populate without triggering 'input' events
+				const setVal = (id: string, val: string) => {
+					const input = cssInspector.querySelector(`#prop-${id}`) as HTMLInputElement
+					if (input) input.value = val
+				}
+
+				// Dimensions
+				setVal("width", computed.width)
+				setVal("height", computed.height)
+				setVal("min-width", computed.minWidth)
+				setVal("max-width", computed.maxWidth)
+				setVal("min-height", computed.minHeight)
+				setVal("max-height", computed.maxHeight)
+				// Spacing
+				setVal("margin", computed.margin)
+				setVal("padding", computed.padding)
+				// Typography
+				setVal("font-size", computed.fontSize)
+				setVal("font-weight", computed.fontWeight)
+				setVal("font-family", computed.fontFamily)
+				setVal("line-height", computed.lineHeight)
+				setVal("letter-spacing", computed.letterSpacing)
+				setVal("text-align", computed.textAlign)
+				setVal("text-decoration", computed.textDecoration)
+				setVal("text-transform", computed.textTransform)
+				setVal("white-space", computed.whiteSpace)
+				// Colors
+				setVal("color-text", computed.color)
+				setVal("bg-text", computed.backgroundColor)
+				setVal("opacity", computed.opacity)
+				// Borders
+				setVal("border", computed.border)
+				setVal("radius", computed.borderRadius)
+				setVal("outline", computed.outline)
+				setVal("box-shadow", computed.boxShadow)
+				// Layout
+				setVal("display", computed.display)
+				setVal("gap", computed.gap)
+				setVal("flex-direction", computed.flexDirection)
+				setVal("flex-wrap", computed.flexWrap)
+				setVal("justify", computed.justifyContent)
+				setVal("align", computed.alignItems)
+				// Positioning
+				setVal("position", computed.position)
+				setVal("z-index", computed.zIndex)
+				setVal("top", computed.top)
+				setVal("right", computed.right)
+				setVal("bottom", computed.bottom)
+				setVal("left", computed.left)
+				// Effects
+				setVal("overflow", computed.overflow)
+				setVal("cursor", computed.cursor)
+				setVal("transition", computed.transition)
+				setVal("transform", computed.transform)
+
+				// Try parsing colors to hex for the color pickers
+				const rgbToHex = (rgb: string) => {
+					const m = rgb.match(/^rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i)
+					if (m) {
+						return (
+							"#" +
+							("0" + parseInt(m[1], 10).toString(16)).slice(-2) +
+							("0" + parseInt(m[2], 10).toString(16)).slice(-2) +
+							("0" + parseInt(m[3], 10).toString(16)).slice(-2)
+						)
+					}
+					return ""
+				}
+
+				const hexColor = rgbToHex(computed.color)
+				const hexBg = rgbToHex(computed.backgroundColor)
+				if (hexColor) setVal("color", hexColor)
+				if (hexBg) setVal("bg", hexBg)
+			}
+
 			sendBtn.addEventListener("click", () => {
-				if (!selected.length) return
-				;(window as any).__clineSendElements(JSON.stringify(selected))
+				if (!selected.length && !recordedActions.length && !designEdits.length && !styleEdits.length) return
+				;(window as any).__clineSendElements(
+					JSON.stringify({
+						elements: selected,
+						actions: recordedActions,
+						designEdits: designEdits.map((d) => ({ selector: d.selector, text: d.text, html: d.html })),
+						styleEdits: styleEdits.map((s) => ({ selector: s.selector, css: s.css })),
+					}),
+				)
 				clearAll()
 				if (pickerOn) pickBtn.click()
+				if (recordingOn) recordBtn.click()
+				if (designOn) designBtn.click()
+				if (stylingOn) styleBtn.click()
 			})
 
 			clearBtn.addEventListener("click", clearAll)
@@ -297,6 +1125,13 @@ export class ElementPickerBrowser {
 			function clearAll() {
 				document.querySelectorAll(".cline-selected").forEach((el) => el.classList.remove("cline-selected"))
 				selected = []
+				recordedActions = []
+				designEdits = []
+				styleEdits = []
+				inspectorTarget.textContent = "No element selected"
+				cssInspector.querySelectorAll("input").forEach((i: any) => (i.value = ""))
+				cssInspector.querySelectorAll("select").forEach((s: any) => (s.selectedIndex = 0))
+				currentStylingElement = null
 				refreshUI()
 			}
 
@@ -332,15 +1167,80 @@ export class ElementPickerBrowser {
 				let html = t.outerHTML
 				if (html.length > 5000) html = html.substring(0, 5000) + "\n<!-- truncated -->"
 
+				// Extract React Components if available
+				let componentName = ""
+				let sourceFile = ""
+				try {
+					const fiberKey = Object.keys(t).find((k) => k.startsWith("__reactFiber$"))
+					if (fiberKey) {
+						let fiber = (t as any)[fiberKey]
+						while (fiber) {
+							if (fiber.type && typeof fiber.type === "function") {
+								componentName = fiber.type.name || ""
+								if (fiber._debugSource) {
+									sourceFile = fiber._debugSource.fileName + ":" + fiber._debugSource.lineNumber
+								}
+								break
+							}
+							fiber = fiber.return
+						}
+					}
+				} catch (e) {}
+
 				const idx = selected.findIndex((x) => x.selector === sel)
 				if (idx >= 0) {
 					selected.splice(idx, 1)
 					t.classList.remove("cline-selected")
 				} else {
-					selected.push({ selector: sel, xpath: xp, html, tagName: tag })
+					selected.push({ selector: sel, xpath: xp, html, tagName: tag, componentName, sourceFile })
 					t.classList.add("cline-selected")
 				}
 				refreshUI()
+			}
+
+			function onRecordClick(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || root.contains(t)) return
+
+				// Exclude typing in input fields since that's handled by change event usually
+				if (t.tagName.toLowerCase() === "input" && (t as HTMLInputElement).type === "text") return
+
+				const sel = cssPath(t)
+				const text = t.textContent?.substring(0, 50).trim().replace(/\n/g, "")
+				recordedActions.push(`Clicked element: ${sel} ${text ? `(Text: "${text}")` : ""}`)
+				refreshUI()
+			}
+
+			function onRecordChange(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || root.contains(t)) return
+				const sel = cssPath(t)
+				let val = (t as HTMLInputElement).value || (t as HTMLInputElement).checked?.toString() || ""
+				if (val.length > 100) val = val.substring(0, 100) + "..."
+				recordedActions.push(`Changed value on ${sel} to: "${val}"`)
+				refreshUI()
+			}
+
+			function onDesignInput(e: Event) {
+				const t = e.target as HTMLElement
+				if (!t || root.contains(t)) return
+				const sel = cssPath(t)
+
+				let editObj = designEdits.find((d) => d.selector === sel)
+				if (!editObj) {
+					editObj = { selector: sel, text: "", html: "" }
+					designEdits.push(editObj)
+				}
+
+				// Debounce UI refresh and capture
+				clearTimeout(editObj.timer)
+				editObj.timer = setTimeout(() => {
+					if (editObj) {
+						editObj.text = t.textContent || ""
+						editObj.html = t.outerHTML
+					}
+					refreshUI()
+				}, 500)
 			}
 
 			function getXPath(el: Element): string {
@@ -398,40 +1298,75 @@ export class ElementPickerBrowser {
 			}
 
 			function refreshUI() {
-				const n = selected.length
-				sendBtn.disabled = n === 0
-				clearBtn.style.display = n > 0 ? "inline-block" : "none"
-				tags.innerHTML = ""
-				if (n === 0) {
-					tags.innerHTML = '<span class="cline-count">Click "Pick Element" to start</span>'
-				} else {
-					const cnt = document.createElement("span")
-					cnt.className = "cline-count"
-					cnt.textContent = n + " selected: "
-					tags.appendChild(cnt)
-					selected.forEach((el, i) => {
-						const t = document.createElement("span")
-						t.className = "cline-tag"
-						t.innerHTML = `&lt;${el.tagName}&gt; <span class="cline-tag-x" data-i="${i}">×</span>`
-						tags.appendChild(t)
-					})
-					tags.querySelectorAll(".cline-tag-x").forEach((btn) => {
-						btn.addEventListener("click", (ev) => {
-							const i = Number.parseInt((ev.target as HTMLElement).getAttribute("data-i") || "0")
-							const rem = selected[i]
-							if (rem) {
-								try {
-									const el = document.querySelector(rem.selector)
-									if (el) el.classList.remove("cline-selected")
-								} catch {
-									/* ignore */
-								}
-							}
-							selected.splice(i, 1)
-							refreshUI()
-						})
-					})
+				saveState()
+				if (
+					selected.length === 0 &&
+					recordedActions.length === 0 &&
+					designEdits.length === 0 &&
+					styleEdits.length === 0
+				) {
+					tags.innerHTML =
+						'<span class="cline-count">Click "Pick Element", "Record Actions", "Design Mode", or "Style Editor"</span>'
+					sendBtn.disabled = true
+					sendBtn.textContent = "Send to Chat"
+					clearBtn.style.display = "none"
+					return
 				}
+
+				let tagsHtml = ""
+				selected.forEach((x, i) => {
+					let lbl = x.selector
+					if (lbl.length > 25) lbl = lbl.substring(0, 25) + "..."
+					tagsHtml += `<span class="cline-tag">${lbl} <span class="cline-tag-x" data-idx="${i}" data-type="element">&times;</span></span>`
+				})
+
+				recordedActions.forEach((x, i) => {
+					tagsHtml += `<span class="cline-tag action">Action ${i + 1} <span class="cline-tag-x" data-idx="${i}" data-type="action">&times;</span></span>`
+				})
+
+				designEdits.forEach((x, i) => {
+					tagsHtml += `<span class="cline-tag design">Edit ${i + 1} <span class="cline-tag-x" data-idx="${i}" data-type="design">&times;</span></span>`
+				})
+
+				styleEdits.forEach((x, i) => {
+					let lbl = x.selector
+					if (lbl.length > 20) lbl = lbl.substring(0, 20) + "..."
+					tagsHtml += `<span class="cline-tag style">Style: ${lbl} <span class="cline-tag-x" data-idx="${i}" data-type="style">&times;</span></span>`
+				})
+
+				tags.innerHTML = tagsHtml
+				sendBtn.disabled = false
+
+				const total = selected.length + recordedActions.length + designEdits.length + styleEdits.length
+				sendBtn.textContent = `Send (${total})`
+				clearBtn.style.display = "block"
+
+				tags.querySelectorAll(".cline-tag-x").forEach((btn) => {
+					btn.addEventListener("click", (e) => {
+						const bt = e.target as HTMLElement
+						const idx = parseInt(bt.getAttribute("data-idx") || "0", 10)
+						const type = bt.getAttribute("data-type")
+
+						if (type === "element") {
+							const selObj = selected[idx]
+							if (selObj) {
+								document.querySelectorAll(".cline-selected").forEach((node) => {
+									if (cssPath(node as HTMLElement) === selObj.selector) {
+										node.classList.remove("cline-selected")
+									}
+								})
+								selected.splice(idx, 1)
+							}
+						} else if (type === "action") {
+							recordedActions.splice(idx, 1)
+						} else if (type === "design") {
+							designEdits.splice(idx, 1)
+						} else if (type === "style") {
+							styleEdits.splice(idx, 1)
+						}
+						refreshUI()
+					})
+				})
 			}
 		}
 	}
@@ -440,15 +1375,75 @@ export class ElementPickerBrowser {
 	 * Send selected elements to the Kilo Code chat
 	 */
 	private async sendElementsToChat(
-		elements: Array<{ selector: string; xpath: string; html: string; tagName: string }>,
+		elements: Array<{
+			selector: string
+			xpath: string
+			html: string
+			tagName: string
+			componentName?: string
+			sourceFile?: string
+		}>,
+		actions: string[] = [],
+		designEdits: Array<{ selector: string; text: string; html: string }> = [],
+		styleEdits: Array<{ selector: string; css: string }> = [],
 	): Promise<void> {
-		if (elements.length === 0) return
+		if (elements.length === 0 && actions.length === 0 && designEdits.length === 0 && styleEdits.length === 0) return
 
-		const parts = elements.map((el, i) => {
-			return `### Element ${i + 1}: \`<${el.tagName}>\`\n**CSS**: \`${el.selector}\`\n**XPath**: \`${el.xpath}\`\n\n\`\`\`html\n${el.html}\n\`\`\``
-		})
+		let parts: string[] = []
 
-		const message = `Browser Elements Selected:\n\n${parts.join("\n\n")}`
+		if (elements.length > 0) {
+			parts = elements.map((el, i) => {
+				let msg = `### Element ${i + 1}: \`<${el.tagName}>\`\n**CSS**: \`${el.selector}\`\n**XPath**: \`${el.xpath}\``
+				if (el.componentName) {
+					msg += `\n**React Component**: \`<${el.componentName}>\``
+				}
+				if (el.sourceFile) {
+					msg += `\n**Source File**: \`${el.sourceFile}\``
+				}
+				msg += `\n\n\`\`\`html\n${el.html}\n\`\`\``
+				return msg
+			})
+		}
+
+		if (actions.length > 0) {
+			parts.push(`### Recorded Actions:\n` + actions.map((a, i) => `${i + 1}. ${a}`).join("\n"))
+		}
+
+		if (designEdits.length > 0) {
+			parts.push(
+				`### Design Mode Edits:\n` +
+					designEdits
+						.map((d, i) => {
+							return `**Edit ${i + 1} on \`${d.selector}\`**\n**New Text Content:**\n\`\`\`text\n${d.text}\n\`\`\`\n**New HTML Content:**\n\`\`\`html\n${d.html}\n\`\`\``
+						})
+						.join("\n\n"),
+			)
+		}
+
+		if (styleEdits.length > 0) {
+			parts.push(
+				`### Style Editor Edits:\n` +
+					styleEdits
+						.map((s, i) => {
+							return `**Edit ${i + 1} on \`${s.selector}\`**\n**New CSS Properties:**\n\`\`\`css\n${s.css}\n\`\`\``
+						})
+						.join("\n\n"),
+			)
+		}
+
+		if (this.capturedErrors.length > 0) {
+			parts.push(`### Captured Errors (Last 50):\n\`\`\`\n` + this.capturedErrors.join("\n") + `\n\`\`\``)
+			this.capturedErrors = [] // Clear after sending
+		}
+
+		if (this.failedNetworkRequests.length > 0) {
+			parts.push(
+				`### Failed Network Requests (Last 50):\n\`\`\`\n` + this.failedNetworkRequests.join("\n") + `\n\`\`\``,
+			)
+			this.failedNetworkRequests = [] // Clear after sending
+		}
+
+		const message = `Browser Elements/Actions Selected:\n\n${parts.join("\n\n")}`
 		const images: string[] = []
 
 		if (this.page) {

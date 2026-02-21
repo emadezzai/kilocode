@@ -133,6 +133,27 @@ const getCommandsMap = ({ context, outputChannel }: RegisterCommandOptions): Rec
 		const { ElementPickerBrowser } = await import("../integrations/browser/BrowserPanel")
 		await ElementPickerBrowser.launch()
 	},
+	"browser.inject": async (action: "execute" | "style", code: string) => {
+		const { ElementPickerBrowser } = await import("../integrations/browser/BrowserPanel")
+		const browser = ElementPickerBrowser.instance
+		if (!browser || !browser.page) {
+			vscode.window.showErrorMessage("No active browser session")
+			return
+		}
+		try {
+			if (action === "execute") {
+				await browser.page.evaluate(code)
+				vscode.window.showInformationMessage("Browser script injected successfully")
+			} else if (action === "style") {
+				await browser.page.addStyleTag({ content: code })
+				vscode.window.showInformationMessage("Browser styles injected successfully")
+			} else {
+				vscode.window.showErrorMessage("Invalid inject action. Use 'execute' or 'style'")
+			}
+		} catch (error) {
+			vscode.window.showErrorMessage(`Inject error: ${error}`)
+		}
+	},
 	open: () => openClineInNewTab({ context, outputChannel }), // kilocode_change
 	openInNewTab: () => openClineInNewTab({ context, outputChannel }),
 	settingsButtonClicked: () => {
